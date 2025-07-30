@@ -1,0 +1,15 @@
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{YYYY-MM-dd HH:mm:ss.SSS} [%thread] %highlight(%-5level) %cyan(%-36logger{36}) - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="cz.oksystem.maruska.drift" level="INFO" additivity="false">
+        <appender-ref ref="STDOUT" />
+    </logger>
+
+    <root level="WARN">
+        <appender-ref ref="STDOUT" />
+    </root>
+</configuration>
