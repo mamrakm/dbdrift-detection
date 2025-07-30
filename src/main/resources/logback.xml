@@ -5,7 +5,7 @@
         </encoder>
     </appender>
 
-    <logger name="cz.oksystem.maruska.drift" level="INFO" additivity="false">
+    <logger name="cz.ememsoft.drift" level="INFO" additivity="false">
         <appender-ref ref="STDOUT" />
     </logger>
 
