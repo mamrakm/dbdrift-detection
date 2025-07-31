@@ -2,135 +2,105 @@ package cz.ememsoft.dbdrift.parser.ast;
 
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
-import com.github.javaparser.ast.expr.AnnotationExpr;
-import com.github.javaparser.ast.expr.Expression;
-import com.github.javaparser.ast.expr.MemberValuePair;
-import com.github.javaparser.ast.expr.NormalAnnotationExpr;
-import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
 import com.github.javaparser.resolution.UnsolvedSymbolException;
-import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.resolution.types.ResolvedType;
 import cz.ememsoft.dbdrift.model.ColumnName;
 import cz.ememsoft.dbdrift.model.TableName;
-import cz.ememsoft.dbdrift.util.NameConverter;
-import lombok.NonNull;
+import cz.ememsoft.dbdrift.parser.util.NamingUtils;
+import cz.ememsoft.dbdrift.util.AnnotationUtils;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.AbstractMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.SortedSet;
 import java.util.TreeSet;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-/**
- * Spracováva jednu @Entity triedu, rekurzívne prechádza jej hierarchiou dedičnosti a vloženými objektmi.
- * Táto verzia obsahuje finálnu opravu pre správne generovanie prefixov pre @Embedded polia.
- */
 @Slf4j
+@RequiredArgsConstructor
 public class JpaEntityProcessor {
-    private final EntityInheritanceGraph graph;
 
-    public JpaEntityProcessor(@NonNull EntityInheritanceGraph graph) { this.graph = graph; }
+    private final EntityInheritanceGraph inheritanceGraph;
 
-    public Map.Entry<TableName, SortedSet<ColumnName>> processEntity(@NonNull ClassOrInterfaceDeclaration entity) {
-        TableName tableName = TableNameExtractor.extractTableName(entity);
+    public Map.Entry<TableName, SortedSet<ColumnName>> processEntity(ClassOrInterfaceDeclaration entity) {
+        ClassOrInterfaceDeclaration root = findHierarchyRoot(entity);
+
+        String tableNameStr = AnnotationUtils.getTableName(root)
+                .orElseGet(() -> NamingUtils.classToTableName(root.getNameAsString()));
+        TableName tableName = new TableName(tableNameStr.toUpperCase());
+
         SortedSet<ColumnName> columns = new TreeSet<>();
-        log.debug("Spracovávam entitu: '{}' -> Tabuľka: '{}'", entity.getNameAsString(), tableName.value());
-        collectColumns(entity, "", columns, Map.of());
-        return new AbstractMap.SimpleImmutableEntry<>(tableName, columns);
+        collectColumnsRecursively(entity, columns);
+
+        return Map.entry(tableName, columns);
     }
 
-    private void collectColumns(@NonNull ClassOrInterfaceDeclaration currentClass, String prefix, @NonNull SortedSet<ColumnName> columns, @NonNull Map<String, String> overrides) {
-        log.trace("Vstupujem do triedy '{}' s prefixom '{}' a {} prepismi.", currentClass.getNameAsString(), prefix, overrides.size());
+    private ClassOrInterfaceDeclaration findHierarchyRoot(ClassOrInterfaceDeclaration current) {
+        Optional<ClassOrInterfaceDeclaration> parentEntity = current.getExtendedTypes().stream()
+                .flatMap(superClassType -> {
+                    try {
+                        ResolvedType resolved = superClassType.resolve();
+                        if (resolved.isReferenceType()) {
+                            String qualifiedName = resolved.asReferenceType().getQualifiedName();
+                            return inheritanceGraph.findClassByQualifiedName(qualifiedName).stream();
+                        }
+                        return Stream.empty();
+                    } catch (UnsolvedSymbolException e) {
+                        log.warn("Nepodarilo sa vyriešiť symbol pre nadtriedu '{}' v kontexte triedy '{}'. Dedičnosť môže byť nekompletná.", superClassType.getNameAsString(), current.getNameAsString());
+                        return Stream.empty();
+                    }
+                })
+                .filter(cd -> cd.isAnnotationPresent("Entity"))
+                .findFirst();
 
-        graph.getSuperclassOf(currentClass).ifPresent(superclass -> {
-            Map<String, String> superclassOverrides = extractAttributeOverrides(currentClass);
-            collectColumns(superclass, prefix, columns, superclassOverrides);
+        return parentEntity.map(this::findHierarchyRoot).orElse(current);
+    }
+
+    private void collectColumnsRecursively(ClassOrInterfaceDeclaration clazz, SortedSet<ColumnName> columns) {
+        collectFieldsFromClass(clazz, columns);
+
+        clazz.getExtendedTypes().forEach(superClassType -> {
+            try {
+                ResolvedType resolvedType = superClassType.resolve();
+                if (resolvedType.isReferenceType()) {
+                    String qualifiedName = resolvedType.asReferenceType().getQualifiedName();
+                    inheritanceGraph.findClassByQualifiedName(qualifiedName)
+                            .ifPresent(superClassDeclaration -> {
+                                if (superClassDeclaration.isAnnotationPresent("MappedSuperclass") || superClassDeclaration.isAnnotationPresent("Entity")) {
+                                    collectColumnsRecursively(superClassDeclaration, columns);
+                                }
+                            });
+                }
+            } catch (UnsolvedSymbolException e) {
+                log.warn("Nepodarilo sa plne vyriešiť hierarchiu pre triedu '{}', pretože jej predok '{}' nebol nájdený v zdrojových kódoch.",
+                        clazz.getNameAsString(), e.getName());
+            }
         });
+    }
 
-        for (FieldDeclaration field : currentClass.getFields()) {
-            if (!isMappableField(field)) continue;
-
-            if (field.isAnnotationPresent("Embedded")) {
-                processEmbedded(field, prefix, columns, overrides);
+    private void collectFieldsFromClass(ClassOrInterfaceDeclaration clazz, SortedSet<ColumnName> columns) {
+        for (FieldDeclaration field : clazz.getFields()) {
+            if (field.isStatic() || field.isAnnotationPresent("Transient")) {
                 continue;
             }
 
-            ColumnExtractor.extractColumnName(field, overrides)
-                    .ifPresent(colName -> columns.add(new ColumnName(prefix.toUpperCase() + colName.value())));
-        }
-    }
+            Optional<String> explicitColumnName = AnnotationUtils.getColumnName(field)
+                    .or(() -> AnnotationUtils.getJoinColumnName(field));
 
-    private void processEmbedded(FieldDeclaration field, String prefix, SortedSet<ColumnName> columns, Map<String, String> parentOverrides) {
-        String fieldName = field.getVariable(0).getNameAsString();
-        log.trace("-> Nájdené vložené pole (Embedded): '{}'", fieldName);
-        try {
-            ResolvedType resolvedType = field.getElementType().resolve();
+            if (explicitColumnName.isPresent()) {
+                columns.add(new ColumnName(explicitColumnName.get().toUpperCase()));
+            } else {
+                boolean isRelationship = field.isAnnotationPresent("OneToOne") ||
+                        field.isAnnotationPresent("ManyToOne") ||
+                        field.isAnnotationPresent("OneToMany") ||
+                        field.isAnnotationPresent("ManyToMany");
 
-            if (resolvedType instanceof ResolvedReferenceType resolvedReferenceType) {
-                String embeddableFqn = resolvedReferenceType.getQualifiedName();
-                graph.findClassByFqn(embeddableFqn).ifPresent(embeddableClass -> {
-
-                    // OPRAVA: Vytvorí nový prefix z názvu poľa, ktorý sa bude aplikovať na stĺpce vloženej triedy.
-                    // Príklad: pole "homeAddress" vytvorí prefix "home_address_".
-                    String newPrefix = prefix + NameConverter.camelToSnake(fieldName) + "_";
-
-                    Map<String, String> embeddedOverrides = extractAttributeOverrides(field);
-                    embeddedOverrides.putAll(parentOverrides);
-
-                    log.trace("Rekurzívne volanie pre @Embedded triedu '{}' s novým prefixom '{}'", embeddableClass.getNameAsString(), newPrefix);
-                    collectColumns(embeddableClass, newPrefix, columns, embeddedOverrides);
-                });
-            }
-        } catch (UnsolvedSymbolException e) {
-            log.warn("Nepodarilo sa vyriešiť typ pre @Embedded pole '{}' v triede '{}'. Stĺpce nebudú pridané.", fieldName, field.findAncestor(ClassOrInterfaceDeclaration.class).map(ClassOrInterfaceDeclaration::getNameAsString).orElse("?"));
-        }
-    }
-
-    private Map<String, String> extractAttributeOverrides(NodeWithAnnotations<?> node) {
-        return node.getAnnotations().stream()
-                .filter(a -> a.getNameAsString().equals("AttributeOverrides") || a.getNameAsString().equals("AttributeOverride"))
-                .flatMap(a -> {
-                    if (a.isNormalAnnotationExpr() && a.getNameAsString().equals("AttributeOverrides")) {
-                        return ((NormalAnnotationExpr) a).getPairs().stream()
-                                .filter(p -> p.getNameAsString().equals("value"))
-                                .map(MemberValuePair::getValue)
-                                .filter(Expression::isArrayInitializerExpr)
-                                .flatMap(e -> e.asArrayInitializerExpr().getValues().stream());
-                    }
-                    return Stream.of(a);
-                })
-                .map(expr -> (AnnotationExpr) expr)
-                .map(this::parseSingleOverride)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (v1, v2) -> v2));
-    }
-
-    private Optional<Map.Entry<String, String>> parseSingleOverride(AnnotationExpr overrideAnnotation) {
-        if (overrideAnnotation.isNormalAnnotationExpr()) {
-            NormalAnnotationExpr normal = overrideAnnotation.asNormalAnnotationExpr();
-            Optional<String> name = normal.getPairs().stream()
-                    .filter(p -> p.getNameAsString().equals("name")).findFirst()
-                    .map(p -> p.getValue().asStringLiteralExpr().asString());
-
-            Optional<String> columnName = normal.getPairs().stream()
-                    .filter(p -> p.getNameAsString().equals("column")).findFirst()
-                    .map(p -> p.getValue().asAnnotationExpr().asNormalAnnotationExpr())
-                    .flatMap(columnAnn -> columnAnn.getPairs().stream()
-                            .filter(p -> p.getNameAsString().equals("name")).findFirst()
-                            .map(p -> p.getValue().asStringLiteralExpr().asString()));
-
-            if (name.isPresent() && columnName.isPresent()) {
-                return Optional.of(Map.entry(name.get(), columnName.get()));
+                if (!isRelationship) {
+                    String columnNameStr = NamingUtils.fieldToColumnName(field.getVariable(0).getNameAsString());
+                    columns.add(new ColumnName(columnNameStr.toUpperCase()));
+                }
             }
         }
-        return Optional.empty();
-    }
-
-    private boolean isMappableField(FieldDeclaration field) {
-        return !field.isStatic() && !field.isAnnotationPresent("Transient") && !field.isAnnotationPresent("OneToMany") && !field.isAnnotationPresent("ManyToMany");
     }
 }

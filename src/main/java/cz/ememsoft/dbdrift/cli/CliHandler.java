@@ -21,7 +21,7 @@ public class CliHandler implements Callable<Integer> {
     public Integer call() {
         log.info("Spúšťam proces detekcie databázového driftu...");
         log.debug("Prijaté argumenty (bez hesla): Host={}, Port={}, DBName={}, User={}, Schema={}, SourceDir={}",
-                arguments.getHost(), arguments.getPort(), arguments.getDbName(), arguments.getUser(), arguments.getSchema(), arguments.getSourceDir());
+                arguments.getHost(), arguments.getPort(), arguments.getDbName(), arguments.getUser(), arguments.getSchema(), arguments.getSourceDirs());
 
         if (!"oracle".equalsIgnoreCase(arguments.getDbType())) {
             log.error("Nepodporovaný typ databázy: '{}'. Podporovaný je iba 'oracle'.", arguments.getDbType());
@@ -34,7 +34,7 @@ public class CliHandler implements Callable<Integer> {
                     arguments.getUser(), arguments.getPassword(), arguments.getSchema().toUpperCase()
             );
             var driftDetector = new DriftDetectionService(dbConfig);
-            driftDetector.detectAndReportDrift(arguments.getSourceDir());
+            driftDetector.detectAndReportDrift(arguments.getSourceDirs());
             log.info("Proces detekcie driftu bol úspešne dokončený.");
             return 0;
         } catch (Exception e) {

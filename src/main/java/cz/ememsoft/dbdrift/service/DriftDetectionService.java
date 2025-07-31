@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.stream.Stream;
 
 /**
@@ -28,7 +29,7 @@ public class DriftDetectionService {
         this.yamlGenerator = new YamlGenerator();
     }
 
-    public void detectAndReportDrift(@NonNull Path sourceDir) {
+    public void detectAndReportDrift(@NonNull List<Path> sourceDir) {
         log.info("Začínam extrakciu schémy z databázy...");
         DatabaseSchema dbSchema = new OracleMetadataExtractor(dbConfig).fetchSchema();
 
