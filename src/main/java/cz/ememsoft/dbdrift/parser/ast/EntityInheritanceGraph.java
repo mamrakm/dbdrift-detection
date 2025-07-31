@@ -15,7 +15,7 @@ import java.util.stream.Collectors;
 public class EntityInheritanceGraph {
 
     private final Map<String, ClassOrInterfaceDeclaration> classMap;
-    private final List<ClassOrInterfaceDeclaration> entities;
+    private final List<ClassOrInterfaceDeclaration> concreteEntities;
 
     public EntityInheritanceGraph(Collection<CompilationUnit> compilationUnits) {
         this.classMap = compilationUnits.stream()
@@ -29,28 +29,33 @@ public class EntityInheritanceGraph {
                         (existing, replacement) -> existing // V prípade duplicity si necháme prvú nájdenú
                 ));
 
-        this.entities = classMap.values().stream()
+        this.concreteEntities = classMap.values().stream()
                 .filter(c -> c.isAnnotationPresent("Entity") && !c.isAbstract())
                 .collect(Collectors.toList());
 
-        log.info("V grafe dedičnosti identifikovaných {} konkrétnych entít.", entities.size());
+        log.info("V grafe dedičnosti identifikovaných {} tried a {} konkrétnych entít.", classMap.size(), concreteEntities.size());
     }
 
     private Optional<Map.Entry<String, ClassOrInterfaceDeclaration>> resolveDeclaration(ClassOrInterfaceDeclaration declaration) {
         try {
-            // === KĽÚČOVÁ OPRAVA ===
-            // Metóda resolve() na ClassOrInterfaceDeclaration vracia ResolvedReferenceTypeDeclaration,
-            // z ktorej môžeme priamo získať kvalifikovaný názov.
             String qualifiedName = declaration.resolve().getQualifiedName();
             return Optional.of(Map.entry(qualifiedName, declaration));
         } catch (UnsolvedSymbolException | UnsupportedOperationException e) {
-            log.trace("Nepodarilo sa získať plne kvalifikovaný názov pre triedu '{}'. Bude ignorovaná v grafe dedičnosti.", declaration.getNameAsString());
+            Optional<String> packageName = declaration.findCompilationUnit()
+                    .flatMap(cu -> cu.getPackageDeclaration().map(pd -> pd.getNameAsString()));
+
+            if (packageName.isPresent()) {
+                String qualifiedName = packageName.get() + "." + declaration.getNameAsString();
+                log.trace("Plné vyriešenie zlyhalo pre '{}', používam odvodený názov: {}", declaration.getNameAsString(), qualifiedName);
+                return Optional.of(Map.entry(qualifiedName, declaration));
+            }
+            log.warn("Nepodarilo sa získať ani odvodiť kvalifikovaný názov pre triedu '{}'. Bude ignorovaná.", declaration.getNameAsString());
             return Optional.empty();
         }
     }
 
-    public List<ClassOrInterfaceDeclaration> getEntities() {
-        return entities;
+    public List<ClassOrInterfaceDeclaration> getConcreteEntities() {
+        return concreteEntities;
     }
 
     public Optional<ClassOrInterfaceDeclaration> findClassByQualifiedName(String qualifiedName) {

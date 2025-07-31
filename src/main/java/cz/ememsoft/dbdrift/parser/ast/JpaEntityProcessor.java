@@ -24,7 +24,7 @@ public class JpaEntityProcessor {
     private final EntityInheritanceGraph inheritanceGraph;
 
     public Map.Entry<TableName, SortedSet<ColumnName>> processEntity(ClassOrInterfaceDeclaration entity) {
-        ClassOrInterfaceDeclaration root = findHierarchyRoot(entity);
+        ClassOrInterfaceDeclaration root = findTableDefiningAncestorOrSelf(entity);
 
         String tableNameStr = AnnotationUtils.getTableName(root)
                 .orElseGet(() -> NamingUtils.classToTableName(root.getNameAsString()));
@@ -36,7 +36,7 @@ public class JpaEntityProcessor {
         return Map.entry(tableName, columns);
     }
 
-    private ClassOrInterfaceDeclaration findHierarchyRoot(ClassOrInterfaceDeclaration current) {
+    private ClassOrInterfaceDeclaration findTableDefiningAncestorOrSelf(ClassOrInterfaceDeclaration current) {
         Optional<ClassOrInterfaceDeclaration> parentEntity = current.getExtendedTypes().stream()
                 .flatMap(superClassType -> {
                     try {
@@ -47,14 +47,13 @@ public class JpaEntityProcessor {
                         }
                         return Stream.empty();
                     } catch (UnsolvedSymbolException e) {
-                        log.warn("Nepodarilo sa vyriešiť symbol pre nadtriedu '{}' v kontexte triedy '{}'. Dedičnosť môže byť nekompletná.", superClassType.getNameAsString(), current.getNameAsString());
                         return Stream.empty();
                     }
                 })
                 .filter(cd -> cd.isAnnotationPresent("Entity"))
                 .findFirst();
 
-        return parentEntity.map(this::findHierarchyRoot).orElse(current);
+        return parentEntity.map(this::findTableDefiningAncestorOrSelf).orElse(current);
     }
 
     private void collectColumnsRecursively(ClassOrInterfaceDeclaration clazz, SortedSet<ColumnName> columns) {
@@ -73,7 +72,7 @@ public class JpaEntityProcessor {
                             });
                 }
             } catch (UnsolvedSymbolException e) {
-                log.warn("Nepodarilo sa plne vyriešiť hierarchiu pre triedu '{}', pretože jej predok '{}' nebol nájdený v zdrojových kódoch.",
+                log.warn("Nepodarilo sa plne vyriešiť hierarchiu pre triedu '{}', pretože jej predok '{}' nebol nájdený v zdrojových kódoch. Atribúty z tohto predka a jeho rodičov nebudú zahrnuté.",
                         clazz.getNameAsString(), e.getName());
             }
         });

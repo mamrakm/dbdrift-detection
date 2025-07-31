@@ -78,7 +78,7 @@ public class JpaSchemaParser {
         // === KĽÚČOVÁ ZMENA LOGIKY ===
         // Spracujeme každú konkrétnu entitu. Procesor sa postará o správne priradenie k tabuľke
         // a zlúčenie stĺpcov v rámci SINGLE_TABLE hierarchie.
-        inheritanceGraph.getEntities().forEach(entityDeclaration -> {
+        inheritanceGraph.getConcreteEntities().forEach(entityDeclaration -> {
             var tableInfo = entityProcessor.processEntity(entityDeclaration);
 
             // Zlúčime stĺpce, ak tabuľka už existuje (pre SINGLE_TABLE dedičnosť)
