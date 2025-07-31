@@ -41,6 +41,8 @@ public class EntityInheritanceGraph {
             String qualifiedName = declaration.resolve().getQualifiedName();
             return Optional.of(Map.entry(qualifiedName, declaration));
         } catch (UnsolvedSymbolException | UnsupportedOperationException e) {
+            // Ak plné vyriešenie zlyhá (napr. chýba predok z JARu), skúsime odvodiť názov z package.
+            // Toto je kľúčové, aby sme triedu nestratili z mapy.
             Optional<String> packageName = declaration.findCompilationUnit()
                     .flatMap(cu -> cu.getPackageDeclaration().map(pd -> pd.getNameAsString()));
 

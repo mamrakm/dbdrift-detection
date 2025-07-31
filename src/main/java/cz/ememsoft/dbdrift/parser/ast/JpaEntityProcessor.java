@@ -24,18 +24,24 @@ public class JpaEntityProcessor {
     private final EntityInheritanceGraph inheritanceGraph;
 
     public Map.Entry<TableName, SortedSet<ColumnName>> processEntity(ClassOrInterfaceDeclaration entity) {
+        // Krok 1: Nájdi koreň hierarchie, ktorý definuje názov tabuľky (@Table)
         ClassOrInterfaceDeclaration root = findTableDefiningAncestorOrSelf(entity);
 
         String tableNameStr = AnnotationUtils.getTableName(root)
                 .orElseGet(() -> NamingUtils.classToTableName(root.getNameAsString()));
         TableName tableName = new TableName(tableNameStr.toUpperCase());
 
+        // Krok 2: Zozbieraj všetky stĺpce z tejto konkrétnej entity a VŠETKÝCH jej predkov
         SortedSet<ColumnName> columns = new TreeSet<>();
         collectColumnsRecursively(entity, columns);
 
         return Map.entry(tableName, columns);
     }
 
+    /**
+     * Nájde najvyšší bod v hierarchii, ktorý je entitou a definuje názov tabuľky.
+     * Toto je kľúčové pre správne fungovanie InheritanceType.SINGLE_TABLE.
+     */
     private ClassOrInterfaceDeclaration findTableDefiningAncestorOrSelf(ClassOrInterfaceDeclaration current) {
         Optional<ClassOrInterfaceDeclaration> parentEntity = current.getExtendedTypes().stream()
                 .flatMap(superClassType -> {
@@ -53,12 +59,18 @@ public class JpaEntityProcessor {
                 .filter(cd -> cd.isAnnotationPresent("Entity"))
                 .findFirst();
 
+        // Ak existuje rodičovská entita, pokračuj v hľadaní nahor. Ak nie, 'current' je koreň.
         return parentEntity.map(this::findTableDefiningAncestorOrSelf).orElse(current);
     }
 
+    /**
+     * Rekurzívne prejde celú hierarchiu dedičnosti smerom nahor a zozbiera všetky stĺpce.
+     */
     private void collectColumnsRecursively(ClassOrInterfaceDeclaration clazz, SortedSet<ColumnName> columns) {
+        // 1. Zozbierame stĺpce z aktuálnej triedy
         collectFieldsFromClass(clazz, columns);
 
+        // 2. Pokračujeme rekurzívne na nadradené triedy
         clazz.getExtendedTypes().forEach(superClassType -> {
             try {
                 ResolvedType resolvedType = superClassType.resolve();
@@ -66,6 +78,7 @@ public class JpaEntityProcessor {
                     String qualifiedName = resolvedType.asReferenceType().getQualifiedName();
                     inheritanceGraph.findClassByQualifiedName(qualifiedName)
                             .ifPresent(superClassDeclaration -> {
+                                // Pokračujeme v rekurzii pre akéhokoľvek známeho predka (@MappedSuperclass alebo @Entity)
                                 if (superClassDeclaration.isAnnotationPresent("MappedSuperclass") || superClassDeclaration.isAnnotationPresent("Entity")) {
                                     collectColumnsRecursively(superClassDeclaration, columns);
                                 }
@@ -78,6 +91,9 @@ public class JpaEntityProcessor {
         });
     }
 
+    /**
+     * Zozbiera všetky perzistentné stĺpce z danej triedy podľa JPA pravidiel.
+     */
     private void collectFieldsFromClass(ClassOrInterfaceDeclaration clazz, SortedSet<ColumnName> columns) {
         for (FieldDeclaration field : clazz.getFields()) {
             if (field.isStatic() || field.isAnnotationPresent("Transient")) {
