@@ -3,7 +3,6 @@ package cz.ememsoft.dbdrift.cli;
 import lombok.Getter;
 import lombok.ToString;
 import picocli.CommandLine.Option;
-import java.nio.file.Path;
 
 /**
  * Dátová trieda, ktorá uchováva spracované argumenty z príkazového riadka pomocou Picocli.

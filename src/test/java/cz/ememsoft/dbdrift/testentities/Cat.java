@@ -1,6 +1,9 @@
 package cz.ememsoft.dbdrift.testentities;
 
-import jakarta.persistence.*;
+import jakarta.persistence.DiscriminatorValue;
+import jakarta.persistence.Entity;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OneToOne;
 
 /**
  * Potomok Animal entity pre testovanie dedičnosti.

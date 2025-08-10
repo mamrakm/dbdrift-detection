@@ -1,6 +1,5 @@
 package cz.ememsoft.dbdrift.db;
 
-
 import cz.ememsoft.dbdrift.config.DatabaseConfig;
 import cz.ememsoft.dbdrift.exception.ApplicationExceptions;
 import lombok.NonNull;

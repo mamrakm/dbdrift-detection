@@ -1,6 +1,5 @@
 package cz.ememsoft.dbdrift.cli;
 
-
 import cz.ememsoft.dbdrift.config.DatabaseConfig;
 import cz.ememsoft.dbdrift.db.DatabaseConnectionFactory;
 import cz.ememsoft.dbdrift.service.SchemaComparisonService;
