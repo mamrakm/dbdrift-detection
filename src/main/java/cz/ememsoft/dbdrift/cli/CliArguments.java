@@ -11,8 +11,10 @@ import java.nio.file.Path;
 @Getter
 @ToString(exclude = "password")
 public class CliArguments {
-    @Option(names = "--source-dir", required = true, description = "Cesta k zdrojovému adresáru Java projektu (napr. src/main/java).")
-    private Path sourceDir;
+    @Option(names = "--classpath", required = true, description = "Cesta k kompilovaným triedam (napr. target/classes alebo JAR súbor).")
+    private String classpath;
+    @Option(names = "--package", required = true, description = "Koreňový balíček pre vyhľadávanie JPA entít (napr. com.example.entities).")
+    private String rootPackage;
     @Option(names = "--db-type", required = true, description = "Typ databázy. Musí byť 'oracle'.")
     private String dbType;
     @Option(names = "--host", required = true, description = "Adresa databázového servera.")

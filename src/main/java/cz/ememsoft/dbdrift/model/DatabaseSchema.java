@@ -1,7 +1,10 @@
 package cz.ememsoft.dbdrift.model;
 
 import lombok.NonNull;
+import java.util.Map;
+import java.util.Set;
+
 /**
- * Finálna trieda pre schému z databázy, implementujúca zapečatené rozhranie Schema.
+ * Reprezentuje schému databázy s tabuľkami a ich stĺpcami.
  */
-public final record DatabaseSchema(@NonNull SchemaDefinition definition) implements Schema {}
+public record DatabaseSchema(@NonNull Map<TableName, Set<ColumnName>> tables) {}

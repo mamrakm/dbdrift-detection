@@ -2,7 +2,8 @@ package cz.ememsoft.dbdrift.cli;
 
 
 import cz.ememsoft.dbdrift.config.DatabaseConfig;
-import cz.ememsoft.dbdrift.service.DriftDetectionService;
+import cz.ememsoft.dbdrift.db.DatabaseConnectionFactory;
+import cz.ememsoft.dbdrift.service.SchemaComparisonService;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
@@ -12,16 +13,17 @@ import java.util.concurrent.Callable;
  * Hlavný handler pre príkazy využívajúci Picocli. Orchestruje celý tok aplikácie.
  */
 @Slf4j
-@Command(name = "db-drift-detector", mixinStandardHelpOptions = true, version = "1.0.0", description = "Deteguje drift medzi schémou Oracle databázy a JPA entitami.")
+@Command(name = "db-drift-detector", mixinStandardHelpOptions = true, version = "1.0.0", description = "Porovnáva schému Oracle databázy s JPA entitami pomocou reflexie.")
 public class CliHandler implements Callable<Integer> {
     @Mixin
     private CliArguments arguments;
 
     @Override
     public Integer call() {
-        log.info("Spúšťam proces detekcie databázového driftu...");
-        log.debug("Prijaté argumenty (bez hesla): Host={}, Port={}, DBName={}, User={}, Schema={}, SourceDir={}",
-                arguments.getHost(), arguments.getPort(), arguments.getDbName(), arguments.getUser(), arguments.getSchema(), arguments.getSourceDir());
+        log.info("Spúšťam porovnanie schémy databázy s JPA entitami...");
+        log.debug("Prijaté argumenty (bez hesla): Host={}, Port={}, DBName={}, User={}, Schema={}, Classpath={}, Package={}",
+                arguments.getHost(), arguments.getPort(), arguments.getDbName(), arguments.getUser(), 
+                arguments.getSchema(), arguments.getClasspath(), arguments.getRootPackage());
 
         if (!"oracle".equalsIgnoreCase(arguments.getDbType())) {
             log.error("Nepodporovaný typ databázy: '{}'. Podporovaný je iba 'oracle'.", arguments.getDbType());
@@ -33,12 +35,23 @@ public class CliHandler implements Callable<Integer> {
                     arguments.getHost(), arguments.getPort(), arguments.getDbName(),
                     arguments.getUser(), arguments.getPassword(), arguments.getSchema().toUpperCase()
             );
-            var driftDetector = new DriftDetectionService(dbConfig);
-            driftDetector.detectAndReportDrift(arguments.getSourceDir());
-            log.info("Proces detekcie driftu bol úspešne dokončený.");
+            
+            var connectionFactory = new DatabaseConnectionFactory();
+            var comparisonService = new SchemaComparisonService();
+            
+            try (var connection = connectionFactory.createConnection(dbConfig)) {
+                comparisonService.compareSchemas(
+                    arguments.getClasspath(), 
+                    arguments.getRootPackage(), 
+                    connection, 
+                    arguments.getSchema().toUpperCase()
+                );
+            }
+            
+            log.info("Porovnanie schémy bolo úspešne dokončené.");
             return 0;
         } catch (Exception e) {
-            log.error("Počas vykonávania detekcie driftu nastala kritická chyba.", e);
+            log.error("Počas porovnávania schémy nastala kritická chyba.", e);
             return 1;
         }
     }
