@@ -86,6 +86,16 @@ public class JpaEntityAnalyzer {
             return overrides.get(fieldName);
         }
         
+        // Check for @JoinColumn annotation (for foreign keys)
+        if (field.isAnnotationPresent(JoinColumn.class)) {
+            JoinColumn joinColumn = field.getAnnotation(JoinColumn.class);
+            if (!joinColumn.name().isEmpty()) {
+                return joinColumn.name();
+            }
+            // Default foreign key naming: fieldName + "_id"
+            return NameConverter.camelToSnake(fieldName) + "_id";
+        }
+        
         // Check for @Column annotation
         if (field.isAnnotationPresent(Column.class)) {
             Column column = field.getAnnotation(Column.class);
@@ -94,38 +104,53 @@ public class JpaEntityAnalyzer {
             }
         }
         
+        // Handle @ManyToOne without @JoinColumn (implicit foreign key)
+        if (field.isAnnotationPresent(ManyToOne.class)) {
+            return NameConverter.camelToSnake(fieldName) + "_id";
+        }
+        
         // Use Spring Boot naming convention (camelCase -> snake_case)
         return NameConverter.camelToSnake(fieldName);
     }
     
     private TableName extractTableName(Class<?> entityClass) {
-        if (entityClass.isAnnotationPresent(Table.class)) {
-            Table table = entityClass.getAnnotation(Table.class);
-            if (!table.name().isEmpty()) {
-                return new TableName(table.name());
+        // Look for @Table annotation in the entire hierarchy
+        Class<?> currentClass = entityClass;
+        while (currentClass != null && currentClass != Object.class) {
+            if (currentClass.isAnnotationPresent(Table.class)) {
+                Table table = currentClass.getAnnotation(Table.class);
+                if (!table.name().isEmpty()) {
+                    return new TableName(table.name());
+                }
             }
+            currentClass = currentClass.getSuperclass();
         }
         
-        // Use Spring Boot naming convention (CamelCase -> snake_case)
+        // Use Spring Boot naming convention (CamelCase -> snake_case) from the entity class
         return new TableName(NameConverter.camelToSnake(entityClass.getSimpleName()));
     }
     
     private void addDiscriminatorColumn(Class<?> entityClass, Set<ColumnName> columns) {
-        if (!entityClass.isAnnotationPresent(Inheritance.class)) {
-            return;
-        }
-        
-        String discriminatorColumnName = "DTYPE"; // JPA default
-        
-        if (entityClass.isAnnotationPresent(DiscriminatorColumn.class)) {
-            DiscriminatorColumn discriminatorColumn = entityClass.getAnnotation(DiscriminatorColumn.class);
-            if (!discriminatorColumn.name().isEmpty()) {
-                discriminatorColumnName = discriminatorColumn.name();
+        // Look for @Inheritance annotation in the inheritance hierarchy
+        Class<?> currentClass = entityClass;
+        while (currentClass != null && currentClass != Object.class) {
+            if (currentClass.isAnnotationPresent(Inheritance.class)) {
+                String discriminatorColumnName = "DTYPE"; // JPA default
+                
+                // Look for @DiscriminatorColumn in the same class that has @Inheritance
+                if (currentClass.isAnnotationPresent(DiscriminatorColumn.class)) {
+                    DiscriminatorColumn discriminatorColumn = currentClass.getAnnotation(DiscriminatorColumn.class);
+                    if (!discriminatorColumn.name().isEmpty()) {
+                        discriminatorColumnName = discriminatorColumn.name();
+                    }
+                }
+                
+                log.trace("Adding discriminator column '{}' for entity '{}'", discriminatorColumnName, entityClass.getSimpleName());
+                columns.add(new ColumnName(discriminatorColumnName.toUpperCase()));
+                return;
             }
+            currentClass = currentClass.getSuperclass();
         }
-        
-        log.trace("Adding discriminator column '{}' for entity '{}'", discriminatorColumnName, entityClass.getSimpleName());
-        columns.add(new ColumnName(discriminatorColumnName.toUpperCase()));
     }
     
     private void extractAttributeOverrides(Object source, Map<String, String> overrides) {
@@ -149,6 +174,26 @@ public class JpaEntityAnalyzer {
             && !Modifier.isFinal(field.getModifiers())
             && !field.isAnnotationPresent(Transient.class)
             && !field.isAnnotationPresent(OneToMany.class)
-            && !field.isAnnotationPresent(ManyToMany.class);
+            && !field.isAnnotationPresent(ManyToMany.class)
+            && !isUnmappedRelationship(field);
+    }
+    
+    private boolean isUnmappedRelationship(Field field) {
+        // Check for @ManyToOne or @OneToOne without explicit column mapping
+        if (field.isAnnotationPresent(ManyToOne.class)) {
+            // If it has @JoinColumn, it should be mapped as foreign key column
+            if (field.isAnnotationPresent(JoinColumn.class)) {
+                return false; // Should be mapped
+            }
+            // Without @JoinColumn, it's mapped as the field name + "_id"
+            return false; // Still mapped, but as FK column
+        }
+        
+        if (field.isAnnotationPresent(OneToOne.class)) {
+            // Similar logic for @OneToOne
+            return !field.isAnnotationPresent(JoinColumn.class);
+        }
+        
+        return false;
     }
 }

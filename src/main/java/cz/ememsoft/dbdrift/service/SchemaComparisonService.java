@@ -1,7 +1,7 @@
 package cz.ememsoft.dbdrift.service;
 
-import cz.ememsoft.dbdrift.db.DatabaseConnectionFactory;
 import cz.ememsoft.dbdrift.db.OracleMetadataExtractor;
+import cz.ememsoft.dbdrift.generator.YamlSchemaGenerator;
 import cz.ememsoft.dbdrift.jpa.EntityDiscovery;
 import cz.ememsoft.dbdrift.jpa.JpaEntityAnalyzer;
 import cz.ememsoft.dbdrift.model.ColumnName;
@@ -9,8 +9,9 @@ import cz.ememsoft.dbdrift.model.DatabaseSchema;
 import cz.ememsoft.dbdrift.model.TableName;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.File;
 import java.sql.Connection;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -20,15 +21,17 @@ public class SchemaComparisonService {
     private final EntityDiscovery entityDiscovery;
     private final JpaEntityAnalyzer entityAnalyzer;
     private final OracleMetadataExtractor metadataExtractor;
+    private final YamlSchemaGenerator yamlGenerator;
     
     public SchemaComparisonService() {
         this.entityDiscovery = new EntityDiscovery();
         this.entityAnalyzer = new JpaEntityAnalyzer();
         this.metadataExtractor = new OracleMetadataExtractor();
+        this.yamlGenerator = new YamlSchemaGenerator();
     }
     
-    public void compareSchemas(String classpath, String packageName, Connection dbConnection, String schemaName) throws Exception {
-        log.info("Starting schema comparison...");
+    public void generateSchemaYamls(String classpath, String packageName, Connection dbConnection, String schemaName) throws Exception {
+        log.info("Starting schema YAML generation...");
         
         // Discover and analyze JPA entities
         Set<Class<?>> entities = entityDiscovery.findEntitiesInPackage(classpath, packageName);
@@ -37,14 +40,17 @@ public class SchemaComparisonService {
         // Extract database schema
         DatabaseSchema dbSchema = metadataExtractor.extractDatabaseSchema(dbConnection, schemaName);
         
-        // Compare schemas
-        compareAndReport(jpaSchema, dbSchema);
+        // Generate YAML files
+        generateYamlFiles(jpaSchema, dbSchema);
+        
+        log.info("Schema YAML files generated successfully. Use diff tool to compare:");
+        log.info("  diff jpa-schema.yaml database-schema.yaml");
     }
     
     private Map<TableName, Set<ColumnName>> analyzeJpaEntities(Set<Class<?>> entities) {
         log.info("Analyzing {} JPA entities...", entities.size());
         
-        Map<TableName, Set<ColumnName>> jpaSchema = new java.util.LinkedHashMap<>();
+        Map<TableName, Set<ColumnName>> jpaSchema = new LinkedHashMap<>();
         
         for (Class<?> entity : entities) {
             try {
@@ -60,80 +66,15 @@ public class SchemaComparisonService {
         return jpaSchema;
     }
     
-    private void compareAndReport(Map<TableName, Set<ColumnName>> jpaSchema, DatabaseSchema dbSchema) {
-        log.info("=== SCHEMA COMPARISON REPORT ===");
+    private void generateYamlFiles(Map<TableName, Set<ColumnName>> jpaSchema, DatabaseSchema dbSchema) throws Exception {
+        // Generate JPA schema YAML
+        yamlGenerator.generateJpaSchemaYaml(jpaSchema, "jpa-schema.yaml");
         
-        Set<String> jpaTableNames = jpaSchema.keySet().stream()
-            .map(tn -> tn.value().toUpperCase())
-            .collect(java.util.stream.Collectors.toSet());
+        // Generate database schema YAML
+        yamlGenerator.generateDatabaseSchemaYaml(dbSchema, "database-schema.yaml");
         
-        Set<String> dbTableNames = dbSchema.tables().keySet().stream()
-            .map(tn -> tn.value().toUpperCase())
-            .collect(java.util.stream.Collectors.toSet());
-        
-        // Tables only in JPA
-        Set<String> onlyInJpa = new HashSet<>(jpaTableNames);
-        onlyInJpa.removeAll(dbTableNames);
-        if (!onlyInJpa.isEmpty()) {
-            log.warn("Tables defined in JPA but missing in database: {}", onlyInJpa);
-        }
-        
-        // Tables only in DB
-        Set<String> onlyInDb = new HashSet<>(dbTableNames);
-        onlyInDb.removeAll(jpaTableNames);
-        if (!onlyInDb.isEmpty()) {
-            log.warn("Tables in database but not mapped by JPA: {}", onlyInDb);
-        }
-        
-        // Compare columns for matching tables
-        for (Map.Entry<TableName, Set<ColumnName>> jpaEntry : jpaSchema.entrySet()) {
-            String tableName = jpaEntry.getKey().value().toUpperCase();
-            Set<ColumnName> jpaColumns = jpaEntry.getValue();
-            
-            TableName dbTableName = dbSchema.tables().keySet().stream()
-                .filter(tn -> tn.value().toUpperCase().equals(tableName))
-                .findFirst()
-                .orElse(null);
-            
-            if (dbTableName != null) {
-                Set<ColumnName> dbColumns = dbSchema.tables().get(dbTableName);
-                compareTableColumns(tableName, jpaColumns, dbColumns);
-            }
-        }
-        
-        log.info("=== END OF COMPARISON REPORT ===");
-    }
-    
-    private void compareTableColumns(String tableName, Set<ColumnName> jpaColumns, Set<ColumnName> dbColumns) {
-        log.info("Comparing columns for table: {}", tableName);
-        
-        Set<String> jpaColumnNames = jpaColumns.stream()
-            .map(cn -> cn.value().toUpperCase())
-            .collect(java.util.stream.Collectors.toSet());
-        
-        Set<String> dbColumnNames = dbColumns.stream()
-            .map(cn -> cn.value().toUpperCase())
-            .collect(java.util.stream.Collectors.toSet());
-        
-        // Columns only in JPA
-        Set<String> onlyInJpa = new HashSet<>(jpaColumnNames);
-        onlyInJpa.removeAll(dbColumnNames);
-        if (!onlyInJpa.isEmpty()) {
-            log.warn("  Columns in JPA but missing in DB: {}", onlyInJpa);
-        }
-        
-        // Columns only in DB
-        Set<String> onlyInDb = new HashSet<>(dbColumnNames);
-        onlyInDb.removeAll(jpaColumnNames);
-        if (!onlyInDb.isEmpty()) {
-            log.warn("  Columns in DB but not in JPA: {}", onlyInDb);
-        }
-        
-        // Matching columns
-        Set<String> matching = new HashSet<>(jpaColumnNames);
-        matching.retainAll(dbColumnNames);
-        if (!matching.isEmpty()) {
-            log.info("  Matching columns ({}): {}", matching.size(), matching);
-        }
+        log.info("Generated YAML files:");
+        log.info("  - jpa-schema.yaml ({} tables)", jpaSchema.size());
+        log.info("  - database-schema.yaml ({} tables)", dbSchema.tables().size());
     }
 }
